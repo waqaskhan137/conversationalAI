@@ -1,0 +1,10 @@
+libportaudio2
+sounddevice
+transformers
+ffmpeg
+numpy
+websockets
+torch
+whisper
+SpeechRecognition
+pyaudio

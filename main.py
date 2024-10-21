@@ -15,5 +15,5 @@ device = torch.device('cpu')
 print("Using CPU")
 
 model = whisper.load_model("tiny", device=device)
-result = model.transcribe("Power_English_Update.mp3", fp16=False)
+result = model.transcribe("WhatsApp Ptt 2024-10-01 at 4.55.52 PM.ogg", fp16=False)
 print("Transcription: \n", result["text"])

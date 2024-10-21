@@ -1,4 +1,3 @@
-// client.js
 let socket;
 let audioContext;
 let processor;
@@ -16,7 +15,7 @@ function startTranscription() {
   stopButton.disabled = false;
 
   // Initialize WebSocket connection to the server
-  socket = new WebSocket('ws://localhost:8000/ws/audio');
+  socket = new WebSocket('ws://localhost:8000');
 
   socket.onopen = function() {
     console.log('WebSocket connection established.');
@@ -39,14 +38,27 @@ function startTranscription() {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const input = audioContext.createMediaStreamSource(stream);
 
-      processor = audioContext.createScriptProcessor(4096, 1, 1);
+      let audioBuffer = [];
+
+      processor = audioContext.createScriptProcessor(16384, 1, 1);
       processor.onaudioprocess = function(e) {
         const inputData = e.inputBuffer.getChannelData(0);
+        console.log(`Original sample rate: ${audioContext.sampleRate}`); 
+        
+        // Resample audio to 16kHz
+        const resampledAudio = resampleAudio(inputData, audioContext.sampleRate, 16000);
+
         // Convert Float32Array to Int16Array
-        const int16Data = floatTo16BitPCM(inputData);
-        // Send audio data to server
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(int16Data);
+        const int16Data = floatTo16BitPCM(resampledAudio);
+        audioBuffer.push(int16Data);
+
+        // Send accumulated audio chunks after a few seconds
+        if (audioBuffer.length >= THRESHOLD_SIZE) {
+          const combinedBuffer = mergeBuffers(audioBuffer);
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(combinedBuffer.buffer);
+          }
+          audioBuffer = []; // Clear buffer after sending
         }
       };
 
@@ -78,6 +90,7 @@ function stopTranscription() {
     globalStream.getTracks().forEach(track => track.stop());
   }
 }
+
 function floatTo16BitPCM(float32Array) {
   const int16Array = new Int16Array(float32Array.length);
   for (let i = 0; i < float32Array.length; i++) {
@@ -87,3 +100,45 @@ function floatTo16BitPCM(float32Array) {
   return int16Array;
 }
 
+// Resample audio from the original sample rate to the target sample rate
+function resampleAudio(audioData, originalSampleRate, targetSampleRate) {
+  if (originalSampleRate === targetSampleRate) {
+    return audioData; // No resampling needed if rates match
+  }
+
+  const sampleRateRatio = originalSampleRate / targetSampleRate;
+  const newLength = Math.round(audioData.length / sampleRateRatio);
+  const resampledAudio = new Float32Array(newLength);
+
+  for (let i = 0; i < newLength; i++) {
+    const originalIndex = i * sampleRateRatio;
+    const lowerIndex = Math.floor(originalIndex);
+    const upperIndex = Math.ceil(originalIndex);
+    const weight = originalIndex - lowerIndex;
+
+    if (upperIndex < audioData.length) {
+      resampledAudio[i] = audioData[lowerIndex] * (1 - weight) + audioData[upperIndex] * weight;
+    } else {
+      resampledAudio[i] = audioData[lowerIndex]; // Handle boundary case
+    }
+  }
+
+  return resampledAudio;
+}
+
+// Helper function to merge Int16Array buffers
+function mergeBuffers(buffers) {
+  const totalLength = buffers.reduce((sum, buffer) => sum + buffer.length, 0);
+  const mergedArray = new Int16Array(totalLength);
+
+  let offset = 0;
+  for (let buffer of buffers) {
+    mergedArray.set(buffer, offset);
+    offset += buffer.length;
+  }
+
+  return mergedArray;
+}
+
+// Define a threshold size for when to send the audio data to the server
+const THRESHOLD_SIZE = 15; // Adjust this value based on your needs

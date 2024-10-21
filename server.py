@@ -1,60 +1,96 @@
-# server.py
+import argparse
 import asyncio
-import websockets
 import numpy as np
+import websockets
 import torch
 import whisper
 import logging
+from datetime import datetime, timedelta
+from queue import Queue
+from datetime import timezone
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
-# Load Whisper model
-model = whisper.load_model("large")
+# Define argument parser for command-line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", default="medium", help="Model to use", choices=["tiny", "base", "small", "medium", "large"])
+parser.add_argument("--non_english", action='store_true', help="Don't use the English model.")
+parser.add_argument("--phrase_timeout", default=6, help="How much empty space between recordings before a new line in transcription.", type=float)
+args = parser.parse_args()
 
+# Load Whisper model with weights_only flag
+model_name = args.model
+if args.model != "large" and not args.non_english:
+    model_name = model_name + ".en"
+model = whisper.load_model(model_name)
+
+# Initialize queue for audio data
+data_queue = Queue()
+
+# Function to process audio data and perform transcription
+def transcribe_audio_from_queue():
+    """Function to process queued audio and return transcription."""
+    phrase_time = None
+    transcription = ['']
+
+    while True:
+        now = datetime.now(timezone.utc)
+        if not data_queue.empty():
+            phrase_complete = False
+            if phrase_time and now - phrase_time > timedelta(seconds=args.phrase_timeout):
+                phrase_complete = True
+            phrase_time = now
+
+            # Combine and process audio data from the queue
+            audio_data = b''.join(list(data_queue.queue))
+            data_queue.queue.clear()
+            audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+            # Transcribe the audio data
+            logging.info("Transcribing audio data...")
+            result = model.transcribe(audio_np, fp16=torch.cuda.is_available())
+            text = result['text'].strip()
+
+            # Handle new phrases
+            if phrase_complete:
+                transcription.append(text)
+            else:
+                transcription[-1] = text
+
+            # Return transcription
+            return '\n'.join(transcription)
+
+# WebSocket audio handler
 async def audio_handler(websocket, path):
     logging.info("Client connected.")
-    buffer = np.array([], dtype=np.int16)
-    CHUNK_DURATION_MS = 500       # Chunk duration in milliseconds
-    CHUNK_SIZE = int(16000 * CHUNK_DURATION_MS / 1000)  # 16kHz audio
-
     try:
         async for message in websocket:
-            # Receive audio data from the client
+            logging.info(f"Received audio data of size: {len(message)} bytes")
+            # Receive the audio data as a buffer from the client
             audio_data = np.frombuffer(message, dtype=np.int16)
-            buffer = np.concatenate((buffer, audio_data))
-            logging.info(f"Received audio data: {len(audio_data)} samples")
+            logging.info(f"Audio samples received: {len(audio_data)}")
 
-            # Process buffer when it reaches CHUNK_SIZE
-            while len(buffer) >= CHUNK_SIZE:
-                chunk = buffer[:CHUNK_SIZE]
-                buffer = buffer[CHUNK_SIZE:]
+            # Pass audio data into the queue for processing
+            data_queue.put(message)
 
-                # Convert int16 to float32
-                audio_float32 = chunk.astype(np.float32) / 32768.0
-                logging.info(f"Processing chunk of size: {CHUNK_SIZE}")
-
-                # Perform transcription asynchronously to avoid blocking
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, transcribe_chunk, audio_float32)
-                text = result.strip()
-                logging.info(f"Transcription result: {text}")
-
-                # Send transcription back to client
-                await websocket.send(text)
+            # Process audio and send back transcription
+            transcription = transcribe_audio_from_queue()
+            if transcription:
+                await websocket.send(transcription)
+                logging.info(f"Sent transcription: {transcription}")
     except websockets.exceptions.ConnectionClosed as e:
-        logging.info("Client disconnected.")
+        logging.info(f"Client disconnected: {e}")
 
-def transcribe_chunk(audio_float32):
-    # Perform transcription
-    result = model.transcribe(audio_float32, fp16=False, language='en')
-    logging.info(f"Transcription result: {result}")
-    return result['text']
-
+# Main function
 async def main():
+    # Start the WebSocket server and listen on localhost port 8000
     async with websockets.serve(audio_handler, "localhost", 8000, max_size=2**25):
-        logging.info("Server started.")
-        await asyncio.Future()  # Run forever
+        logging.info("Server started on ws://localhost:8000")
+        await asyncio.Future()  # Run indefinitely
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logging.error(f"Server error: {e}")
