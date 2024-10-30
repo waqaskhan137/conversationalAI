@@ -4,11 +4,12 @@
 # Use an official Python runtime as the parent image
 FROM --platform=linux/arm64 python:3.9-slim
 
-RUN mkdir -p ~/.config/pip && \
+RUN ping -c 1 192.168.2.30 > /dev/null 2>&1 && \
+    (mkdir -p ~/.config/pip && \
     echo "[global]" > ~/.config/pip/pip.conf && \
     echo "index-url = http://192.168.2.30:8081/repository/pypi/simple" >> ~/.config/pip/pip.conf && \
     echo "trusted-host = 192.168.2.30" >> ~/.config/pip/pip.conf && \
-    echo "timeout = 300" >> ~/.config/pip/pip.conf
+    echo "timeout = 300" >> ~/.config/pip/pip.conf) || true
 
 # Install system-level dependencies for audio processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
