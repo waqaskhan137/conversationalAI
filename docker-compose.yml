@@ -1,0 +1,26 @@
+version: '3'
+services:
+  frontend:
+    build: frontend                
+    ports:
+      - "5500:80"                    
+    restart: on-failure  
+    depends_on:
+      - backend
+    networks:
+      - websocket-network   
+    environment:
+      - WEBSOCKET_URL=ws://backend:8000/ws
+
+  backend:
+    build: .                        
+    ports:
+      - "8000:8000"                   
+    restart:  on-failure  
+    networks:
+      - websocket-network
+    
+
+networks:
+  websocket-network:
+    driver: bridge

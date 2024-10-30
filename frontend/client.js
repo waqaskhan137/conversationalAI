@@ -15,7 +15,7 @@ function startTranscription() {
   stopButton.disabled = false;
 
   // Initialize WebSocket connection to the server
-  socket = new WebSocket('ws://localhost:8000');
+  socket = new WebSocket('ws://backend:8000/ws');
 
   socket.onopen = function() {
     console.log('WebSocket connection established.');

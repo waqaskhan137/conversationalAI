@@ -85,8 +85,8 @@ async def audio_handler(websocket, path):
 # Main function
 async def main():
     # Start the WebSocket server and listen on localhost port 8000
-    async with websockets.serve(audio_handler, "localhost", 8000, max_size=2**25):
-        logging.info("Server started on ws://localhost:8000")
+    async with websockets.serve(audio_handler, "0.0.0.0", 8000, max_size=2**25, path="/ws"):
+        logging.info("Server started on ws://0.0.0.0:8000/ws")
         await asyncio.Future()  # Run indefinitely
 
 if __name__ == "__main__":
