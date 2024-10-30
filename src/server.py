@@ -8,13 +8,14 @@ import logging
 from datetime import datetime, timedelta
 from queue import Queue
 from datetime import timezone
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 # Define argument parser for command-line arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", default="medium", help="Model to use", choices=["tiny", "base", "small", "medium", "large"])
+parser.add_argument("--model", default="tiny", help="Model to use", choices=["tiny", "base", "small", "medium", "large"])
 parser.add_argument("--non_english", action='store_true', help="Don't use the English model.")
 parser.add_argument("--phrase_timeout", default=6, help="How much empty space between recordings before a new line in transcription.", type=float)
 args = parser.parse_args()
@@ -23,6 +24,10 @@ args = parser.parse_args()
 model_name = args.model
 if args.model != "large" and not args.non_english:
     model_name = model_name + ".en"
+    
+
+print(f"Loading model: {model_name}")   
+
 model = whisper.load_model(model_name)
 
 # Initialize queue for audio data
@@ -85,8 +90,8 @@ async def audio_handler(websocket, path):
 # Main function
 async def main():
     # Start the WebSocket server and listen on localhost port 8000
-    async with websockets.serve(audio_handler, "0.0.0.0", 8000, max_size=2**25, path="/ws"):
-        logging.info("Server started on ws://0.0.0.0:8000/ws")
+    async with websockets.serve(audio_handler, "0.0.0.0", int(os.getenv('port', 8000)), max_size=2**25):
+        logging.info("Server started on ws://0.0.0.0:8000")
         await asyncio.Future()  # Run indefinitely
 
 if __name__ == "__main__":
