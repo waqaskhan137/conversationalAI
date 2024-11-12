@@ -5,6 +5,5 @@ ffmpeg
 numpy
 websockets
 torch
-whisper
-SpeechRecognition
-pyaudio
+python-dotenv
+coqui-tts
