@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from queue import Queue
 from datetime import timezone
 import os
-from TTS.api import TTS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,25 +25,19 @@ model_name = args.model
 if args.model != "large" and not args.non_english:
     model_name = model_name + ".en"
     
-print(f"Loading model: {model_name}")   
-model = whisper.load_model(model_name)
 
-# Initialize TTS model
-tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
-logging.info("TTS model initialized.") 
+print(f"Loading model: {model_name}")   
+
+model = whisper.load_model(model_name)
 
 # Initialize queue for audio data
 data_queue = Queue()
 
-# Initialize counters for each TTS file
-chunk_counter = 0
-
 # Function to process audio data and perform transcription
 def transcribe_audio_from_queue():
     """Function to process queued audio and return transcription."""
-    global chunk_counter
     phrase_time = None
-    transcription = ''
+    transcription = ['']
 
     while True:
         now = datetime.now(timezone.utc)
@@ -64,20 +57,14 @@ def transcribe_audio_from_queue():
             result = model.transcribe(audio_np, fp16=torch.cuda.is_available())
             text = result['text'].strip()
 
-            # Handle each chunk separately
-            if text:
-                transcription = text
-                chunk_counter += 1
-                return transcription, chunk_counter  # Return both text and unique chunk number
+            # Handle new phrases
+            if phrase_complete:
+                transcription.append(text)
+            else:
+                transcription[-1] = text
 
-    return None, None  # No transcription if queue is empty
-
-def generate_tts_audio(text, chunk_id):
-    """Generates speech from text using TTS-Coqui for each chunk."""
-    logging.info(f"Generating TTS audio for text: {text}")
-    output_path = f"output_chunk_{chunk_id}.wav"  # Unique file for each chunk
-    tts.tts_to_file(text=text, file_path=output_path)  # Save the TTS audio to a file
-    return output_path
+            # Return transcription
+            return '\n'.join(transcription)
 
 # WebSocket audio handler
 async def audio_handler(websocket):
@@ -93,34 +80,18 @@ async def audio_handler(websocket):
             data_queue.put(message)
 
             # Process audio and send back transcription
-            transcription, chunk_id = transcribe_audio_from_queue()
+            transcription = transcribe_audio_from_queue()
             if transcription:
-                # Send transcription text
-                await websocket.send(transcription)  # Send text transcription
+                await websocket.send(transcription)
                 logging.info(f"Sent transcription: {transcription}")
-
-                # Generate TTS Audio for each chunk
-                audio_file_path = generate_tts_audio(transcription, chunk_id)
-                logging.info(f"Generated TTS audio at: {audio_file_path}")
-
-                # Send back the TTS audio file path for each chunk
-                await websocket.send(f"TTS Audio File Path: {audio_file_path}")
-                logging.info(f"Sent TTS audio file path: {audio_file_path}")
-                
     except websockets.exceptions.ConnectionClosed as e:
         logging.info(f"Client disconnected: {e}")
-    except IndexError:
-        logging.warning("IndexError: Tried to pop from an empty deque.")
-    except asyncio.CancelledError:
-        logging.info("Connection handler task was cancelled.")
-    finally:
-        logging.info("Cleaning up connection.")
 
 # Main function
 async def main():
     # Start the WebSocket server and listen on localhost port 8000
-    async with websockets.serve(audio_handler, "localhost", 8000, max_size=2**25):
-        logging.info("Server started on ws://localhost:8000")
+    async with websockets.serve(audio_handler, "0.0.0.0", int(os.getenv('port', 8000)), max_size=2**25):
+        logging.info("Server started on ws://0.0.0.0:8000")
         await asyncio.Future()  # Run indefinitely
 
 if __name__ == "__main__":
