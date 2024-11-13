@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from queue import Queue
 from datetime import timezone
 import os
+from TTS.api import TTS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +30,12 @@ if args.model != "large" and not args.non_english:
 print(f"Loading model: {model_name}")   
 
 model = whisper.load_model(model_name)
+
+try:
+    tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
+    logging.info("TTS model initialized.")
+except Exception as e:
+    logging.error(f"Failed to initialize TTS model: {e}")
 
 # Initialize queue for audio data
 data_queue = Queue()
@@ -82,7 +89,11 @@ async def audio_handler(websocket):
             # Process audio and send back transcription
             transcription = transcribe_audio_from_queue()
             if transcription:
+
                 await websocket.send(transcription)
+                logging.info(f"Generating TTS for transcription: {transcription}")
+                tts.tts_to_file(text=transcription, file_path="output.wav")
+
                 logging.info(f"Sent transcription: {transcription}")
     except websockets.exceptions.ConnectionClosed as e:
         logging.info(f"Client disconnected: {e}")

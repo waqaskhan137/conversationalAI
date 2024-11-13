@@ -1,6 +1,8 @@
-libportaudio2
+pyaudio
 sounddevice
 transformers
+SpeechRecognition   
+git+https://github.com/openai/whisper.git
 ffmpeg
 numpy
 websockets
