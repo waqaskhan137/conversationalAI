@@ -7,6 +7,10 @@ const startButton = document.getElementById('startButton');
 const stopButton = document.getElementById('stopButton');
 const transcriptionDiv = document.getElementById('transcription');
 
+// Audio playback queue and state
+let audioQueue = [];
+let isPlaying = false;
+
 startButton.addEventListener('click', startTranscription);
 stopButton.addEventListener('click', stopTranscription);
 
@@ -21,9 +25,18 @@ function startTranscription() {
     console.log('WebSocket connection established.');
   };
 
-  socket.onmessage = function(event) {
-    const message = event.data;
-    transcriptionDiv.innerHTML += `<p>${message}</p>`;
+  socket.onmessage = function (event) {
+    const message = JSON.parse(event.data);
+  
+    if (message.type === "text") {
+      // Display transcription immediately
+      transcriptionDiv.innerHTML += `<p>${message.data}</p>`;
+    } else if (message.type === "audio") {
+      // Convert hex string back to binary audio data
+      const audioData = new Uint8Array(message.data.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+      audioQueue.push(audioData);
+      playNextAudio(); // Start playing the audio if not already playing
+    }
   };
 
   socket.onclose = function() {
@@ -43,7 +56,6 @@ function startTranscription() {
       processor = audioContext.createScriptProcessor(16384, 1, 1);
       processor.onaudioprocess = function(e) {
         const inputData = e.inputBuffer.getChannelData(0);
-        console.log(`Original sample rate: ${audioContext.sampleRate}`); 
         
         // Resample audio to 16kHz
         const resampledAudio = resampleAudio(inputData, audioContext.sampleRate, 16000);
@@ -138,6 +150,31 @@ function mergeBuffers(buffers) {
   }
 
   return mergedArray;
+}
+
+// Function to play audio from the queue
+function playNextAudio() {
+  if (audioQueue.length > 0 && !isPlaying) {
+    isPlaying = true;
+
+    // Get the next audio chunk
+    const audioData = audioQueue.shift();
+
+    // Create an audio context for playback
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.decodeAudioData(audioData.buffer, buffer => {
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      source.start();
+
+      // When playback ends, play the next audio chunk
+      // source.onended = () => {
+      //   isPlaying = false;
+      //   playNextAudio();
+      // };
+    });
+  }
 }
 
 // Define a threshold size for when to send the audio data to the server

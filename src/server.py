@@ -5,6 +5,7 @@ import websockets
 import torch
 import whisper
 import logging
+import json
 from datetime import datetime, timedelta
 from queue import Queue
 from datetime import timezone
@@ -25,10 +26,8 @@ args = parser.parse_args()
 model_name = args.model
 if args.model != "large" and not args.non_english:
     model_name = model_name + ".en"
-    
 
 print(f"Loading model: {model_name}")   
-
 model = whisper.load_model(model_name)
 
 try:
@@ -40,9 +39,30 @@ except Exception as e:
 # Initialize queue for audio data
 data_queue = Queue()
 
+# Keep track of transcription chunks for naming files
+chunk_index = 1
+
+# Function to generate TTS from text and include chunk_index in filename
+def generate_tts_from_text(transcription_text):
+    global chunk_index 
+    """Function to generate speech from text and save it to a file, including chunk_index in filename."""
+    output_filename = f"output_{chunk_index}.wav"
+
+    # Increment the chunk index for the next transcription
+    chunk_index += 1
+    
+    logging.info(f"Generating TTS for transcription: {transcription_text}")
+    try:
+        tts.tts_to_file(text=transcription_text, file_path=output_filename)
+        logging.info(f"TTS audio file generated: {output_filename}")
+    except Exception as e:
+        logging.error(f"Error generating TTS: {e}")
+    return output_filename
+
 # Function to process audio data and perform transcription
 def transcribe_audio_from_queue():
     """Function to process queued audio and return transcription."""
+    global chunk_index  # Access the global chunk_index
     phrase_time = None
     transcription = ['']
 
@@ -69,32 +89,31 @@ def transcribe_audio_from_queue():
                 transcription.append(text)
             else:
                 transcription[-1] = text
-
             # Return transcription
             return '\n'.join(transcription)
 
 # WebSocket audio handler
 async def audio_handler(websocket):
+    global chunk_index
     logging.info("Client connected.")
     try:
         async for message in websocket:
             logging.info(f"Received audio data of size: {len(message)} bytes")
-            # Receive the audio data as a buffer from the client
-            audio_data = np.frombuffer(message, dtype=np.int16)
-            logging.info(f"Audio samples received: {len(audio_data)}")
-
-            # Pass audio data into the queue for processing
+            
+            # Receive and process audio
             data_queue.put(message)
-
-            # Process audio and send back transcription
             transcription = transcribe_audio_from_queue()
+            
             if transcription:
-
-                await websocket.send(transcription)
-                logging.info(f"Generating TTS for transcription: {transcription}")
-                tts.tts_to_file(text=transcription, file_path="output.wav")
-
-                logging.info(f"Sent transcription: {transcription}")
+                # Send transcription text
+                await websocket.send(json.dumps({"type": "text", "data": transcription}))
+                
+                # Generate TTS audio and send audio data
+                audio_filename = generate_tts_from_text(transcription)
+                with open(audio_filename, "rb") as audio_file:
+                    audio_data = audio_file.read()
+                await websocket.send(json.dumps({"type": "audio", "data": audio_data.hex()}))
+                logging.info(f"Sent transcription and audio: {transcription}")
     except websockets.exceptions.ConnectionClosed as e:
         logging.info(f"Client disconnected: {e}")
 
